@@ -2,8 +2,82 @@ var svgDocument;
 var xmlns = "http://www.w3.org/2000/svg";
 
 ////////////////////////////////////////////////////////////////////////////////
+// Simulation Components
+////////////////////////////////////////////////////////////////////////////////
 
-function Variable() {
+function Simulator() {
+	// Current simulation time
+	this.time = -1;
+	
+	// Run-queues
+	this.ready     = [];
+	this.inactive  = [];
+	this.postponed = {};
+}
+Simulator.prototype = {
+	doNow : function (f) {
+		this.ready.push(f);
+	},
+	
+	doLater : function (f, delay) {
+		if (delay == undefined)
+			this.inactive.push(f);
+		else
+			this.doAtTime(f, this.time + delay);
+	},
+	
+	doAtTime : function (f, time) {
+		if (this.postponed[time] == undefined)
+			this.postponed[time] = [];
+		
+		this.postponed[time].push(f);
+	},
+	
+	onstart : function (f) {
+		this.doAtTime(f, 0);
+	},
+	
+	_processReady : function () {
+		while (this.ready.length > 0)
+			this.ready.shift()();
+	},
+	
+	processTimestep : function () {
+		// Advance the timestep
+		this.time++;
+		
+		if (this.postponed[this.time]) {
+			// Run the simulation until the timestep is complete
+			this.ready = this.postponed[this.time];
+			delete this.postponed[this.time];
+			
+			while (this.ready.length > 0) {
+				this._processReady();
+				
+				// Make inactive jobs active
+				this.ready = this.inactive;
+				this.inactive = [];
+			}
+			
+			return true;
+		} else {
+			return false;
+		}
+	},
+}
+
+
+
+function Variable(simulator) {
+	this.simulator = simulator;
+	
+	this.value = null;
+	
+	// Trigger events
+	this.triggerOnChange  = [];
+	this.triggerOnPosedge = [];
+	this.triggerOnNegedge = [];
+	
 	this.paths = [];
 }
 Variable.prototype = {
@@ -20,6 +94,7 @@ Variable.prototype = {
 		path.variable = this;
 	},
 	
+	
 	merge : function (that) {
 		// Merge another variable into this same variable
 		while (that.paths.length != 0) {
@@ -29,9 +104,44 @@ Variable.prototype = {
 				this.paths.push(path);
 		}
 	},
+	
+	
+	// Request scheduling after a given event
+	onchange  : function (f) { this.triggerOnChange.push(f); },
+	onposedge : function (f) { this.triggerOnPosedge.push(f); },
+	onnegedge : function (f) { this.triggerOnNegedge.push(f); },
+	
+	
+	get : function () {
+		return this.value;
+	},
+	
+	set : function (new_value) {
+		var old_value = this.value;
+		this.value = new_value;
+		
+		// Trigger sensitive events
+		this.triggerOnChange.forEach(function (f) { this.simulator.doNow(f); });
+		if (old_value != new_value) {
+			// Edge Triggering
+			if (this.value)
+				this.triggerOnPosedge.forEach(function (f) { this.simulator.doNow(f); });
+			else
+				this.triggerOnNegedge.forEach(function (f) { this.simulator.doNow(f); });
+		}
+	},
+	
+	setLater : function (new_value, delay) {
+		var thisvar = this;
+		this.simulator.doLater(function () {
+			thisvar.set(new_value);
+		}, delay);
+	},
 }
 
-// Design Elaboration //////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Design Elaboration
+////////////////////////////////////////////////////////////////////////////////
 
 // Remove ID attributes from this node and any of its children
 function removeIDs(node) {
@@ -275,7 +385,7 @@ function getPathsAtPoints(paths) {
 
 
 // Assign a variable to all connected paths.
-function assignVariablesToPaths(paths) {
+function assignVariablesToPaths(simulator, paths) {
 	var pathsAtPoints = getPathsAtPoints(paths);
 	
 	for (var i = 0; i < pathsAtPoints.length; i++) {
@@ -283,7 +393,7 @@ function assignVariablesToPaths(paths) {
 		var paths = pathsAtPoint.paths;
 		
 		// The variable the paths at this point are connected to
-		var variable = new Variable();
+		var variable = new Variable(simulator);
 		
 		for (var j = 0; j < pathsAtPoint.paths.length; j++)
 			variable.addPath(pathsAtPoint.paths[j]);
@@ -291,29 +401,69 @@ function assignVariablesToPaths(paths) {
 }
 
 
+// Initialise a DOM element which is a cell
+function initialiseCell(simulator, cell) {
+	// Use the inkscape description as the code to initialise this cell
+	var code = cell.getElementsByTagName("desc")[0].textContent;
+	
+	if (code) {
+		// A dictionary of ports
+		var port  = {};
+		
+		// Extract the ports as the labelled paths
+		var paths = cell.getElementsByTagName("path");
+		for (var i = 0; i < paths.length; i++) {
+			var path = paths[i];
+			var name = path.getAttribute("inkscape:label");
+			var variable = path.variable;
+			if (name != null)
+				port[name] = variable;
+		}
+		
+		var dom = cell;
+		
+		// Execute the code
+		eval(code);
+	}
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
+
+var simulator;
 
 function on_load(evt) {
 	svgDocument=evt.target.ownerDocument;
+	
+	// Create a simulator
+	simulator = new Simulator();
+	
+	// Deep-copy all clones
+	unuseAll();
+	
+	// Assign variables to all paths
+	assignVariablesToPaths(simulator, svgDocument.getElementsByTagName("path"));
+	
+	var cells = svgDocument.getElementsByTagName("g");
+	for (var i = 0; i < cells.length; i++) {
+		var cell  = cells[i];
+		var label = cell.getAttribute("inkscape:label");
+		if (label != null && label.split(":")[0] == "cell")
+			initialiseCell(simulator, cell);
+	}
+	
 	svgDocument.getElementById("button").onclick = hide_button;
 }
 
 
 function hide_button () {
-	unuseAll();
+	var changed = simulator.processTimestep();
+	console.log(simulator.time + ": " + changed);
 	
-	var paths = svgDocument.getElementsByTagName("path");
-	assignVariablesToPaths(paths);
-	
-	// Colour wires uniquely
-	for (var i = 0; i < paths.length; i++) {
-		if (paths[i].variable) {
-			r = Math.floor(Math.random()*255);
-			g = Math.floor(Math.random()*255);
-			b = Math.floor(Math.random()*255);
-			paths[i].variable.paths.forEach(function (val) {
-				val.style.stroke = "rgb(" + r + "," + g + "," + b + ")";
-			});
+	var wires = svgDocument.getElementsByTagName("path");
+	for (var i = 0; i < wires.length; i ++) {
+		if (wires[i].variable) {
+			wires[i].style.stroke = wires[i].variable.get() ? "rgb(255,0,0)" : "rgb(0,0,0)" ;
 		}
 	}
 }
