@@ -1,19 +1,50 @@
 var svgDocument;
 var xmlns = "http://www.w3.org/2000/svg";
 
+////////////////////////////////////////////////////////////////////////////////
 
-function on_load(evt) {
-	svgDocument=evt.target.ownerDocument;
-	svgDocument.getElementById("button").onclick = hide_button;
+function Variable() {
+	this.paths = [];
+}
+Variable.prototype = {
+	addPath : function (path) {
+		// Add this path to the list of paths
+		this.paths.push(path);
+		
+		// Marge in the variable the path was already connected to
+		if (path.variable) {
+			this.merge(path.variable);
+		}
+		
+		// Set the variable for the path
+		path.variable = this;
+	},
+	
+	merge : function (that) {
+		// Merge another variable into this same variable
+		while (that.paths.length != 0) {
+			var path = that.paths.pop();
+			path.variable = this;
+			if (this.paths.indexOf(path) == -1)
+				this.paths.push(path);
+		}
+	},
 }
 
+// Design Elaboration //////////////////////////////////////////////////////////
+
+// Remove ID attributes from this node and any of its children
 function removeIDs(node) {
+	// If this node has an ID, remove it
 	if (node.removeAttribute)
 		node.removeAttribute("id");
+	
+	// Recurse through its children
 	for (var i = 0; i < node.childElementCount; i++)
 		removeIDs(node.childNodes[i]);
 }
 
+// Convert a use tag into a deep copy of the object it is cloning
 function unuse(use) {
 	// Get the ID of the original element
 	var origID = use.getAttribute("xlink:href").slice(1);
@@ -41,6 +72,11 @@ function unuse(use) {
 	return clone;
 }
 
+
+// Get an array containing all use tags.
+// Kind-of a hack as the result of getElementsByTagName is not a static array so
+// needs copying if any use tags are going to be removed while iterating over
+// the list.
 function getUseTags() {
 	var nodeList = svgDocument.getElementsByTagName("use");
 	var useTags = [];
@@ -51,6 +87,8 @@ function getUseTags() {
 }
 
 
+// Get the matrix used to transform the coordinates in this node to screen
+// coordinates.
 function getRealMatrix(node) {
 	if (node.nodeName == "svg") {
 		// Root node
@@ -69,38 +107,8 @@ function getRealMatrix(node) {
 	}
 }
 
-function getRealPos(node) {
-	if (node.nodeName == "svg") {
-		// Root node
-		return [0,0];
-	} else {
-		var parentPos = getRealPos(node.parentElement);
-		
-		if (node.transform.baseVal.numberOfItems == 0) {
-			return parentPos;
-		} else if (node.transform.baseVal.numberOfItems == 1) {
-			var x = parentPos[0] + node.transform.baseVal.getItem(0).matrix.e;
-			var y = parentPos[1] + node.transform.baseVal.getItem(0).matrix.f;
-			return [x,y];
-		} else {
-			console.warn("Couldn't get real position of element with more than one matrix", node);
-			return parentPos;
-		}
-	}
-}
 
-//var components = {
-//	components : {},
-//	
-//	addInstance : function (instance, componentID) {
-//		if (this.components[componentID] != undefined) {
-//			this.components[componentID].push(instance);
-//		} else {
-//			this.components[componentID] = [instance];
-//		}
-//	}
-//}
-
+// A key-array associative store
 function KeyValues() {
 	this.keys   = [];
 	this.values = [];
@@ -123,14 +131,22 @@ KeyValues.prototype = {
 	},
 }
 
+
+// Get the DOM object which a use tag is a clone of
 function getUseOriginal(use) {
 	return svgDocument.getElementById(use.getAttribute("xlink:href").slice(1));
 }
 
+
+// Test to see if a dom-object is a use-clone of the given dom object
 function isUseOf(use, original) {
 	return ("#" + original.getAttribute("id")) == use.getAttribute("xlink:href");
 }
 
+
+// Turn all use tags in the document into literal copies.
+// This function is careful to do this in the correct order to ensure that any
+// level of nesting of use tags will work correclty.
 function unuseAll() {
 	// Build up a dictionary of use-sources to use tags (XXX: not needed, just a
 	// list of sources)
@@ -182,11 +198,14 @@ function unuseAll() {
 }
 
 
+// A point in the SVG
 function Point(x, y) {
 	this.x = x;
 	this.y = y;
 }
 Point.prototype = {
+	// Compares position only approximately as float errors mean lines which are
+	// exactly at the same position don't always have the same coordinates.
 	equals : function (that) {
 		return ((Math.abs(this.x - that.x)
 		         + Math.abs(this.y - that.y))
@@ -195,6 +214,7 @@ Point.prototype = {
 }
 
 
+// Turn a path dom object into a list of Points (if possible)
 function pathToPoints(path) {
 	var tMatrix = getRealMatrix(path);
 	
@@ -224,6 +244,8 @@ function pathToPoints(path) {
 	return realPathSegList;
 }
 
+
+// Convert a list of dom path objects into a list of {point:Point, paths:[...]}
 function getPathsAtPoints(paths) {
 	var pathsAtPoints = [];
 	function addPathAtPoint(path, point) {
@@ -252,35 +274,7 @@ function getPathsAtPoints(paths) {
 }
 
 
-function Variable() {
-	this.paths = [];
-}
-Variable.prototype = {
-	addPath : function (path) {
-		// Add this path to the list of paths
-		this.paths.push(path);
-		
-		// Marge in the variable the path was already connected to
-		if (path.variable) {
-			this.merge(path.variable);
-		}
-		
-		// Set the variable for the path
-		path.variable = this;
-	},
-	
-	merge : function (that) {
-		// Merge another variable into this same variable
-		while (that.paths.length != 0) {
-			var path = that.paths.pop();
-			path.variable = this;
-			if (this.paths.indexOf(path) == -1)
-				this.paths.push(path);
-		}
-	},
-}
-
-
+// Assign a variable to all connected paths.
 function assignVariablesToPaths(paths) {
 	var pathsAtPoints = getPathsAtPoints(paths);
 	
@@ -297,45 +291,21 @@ function assignVariablesToPaths(paths) {
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+
+function on_load(evt) {
+	svgDocument=evt.target.ownerDocument;
+	svgDocument.getElementById("button").onclick = hide_button;
+}
+
+
 function hide_button () {
-	//alert(svgDocument.getElementById("register").getElementsByTagName("desc")[0].textContent);
-	
-	//var orig   = svgDocument.getElementById("register");
-	//var clone  = orig.cloneNode(true);
-	//var newreg = svgDocument.createElementNS(xmlns, "g");
-	//var oldreg = svgDocument.getElementById("dupe");
-	//newreg.appendChild(clone);
-	//
-	//var oldmatrix  = clone.transform.baseVal.getItem(0).matrix;
-	//var origmatrix = orig.transform.baseVal.getItem(0).matrix;
-	//
-	//newreg.setAttribute("transform", oldreg.getAttribute("transform"))
-	//
-	//oldreg.parentNode.replaceChild(newreg, oldreg);
-	//newreg.setAttribute("id", "dupe");
-	//svgDocument.getElementById("dupe").lastElementChild.lastElementChild.style.stroke = "rgb(128,0,255)";
-	
-	//var unused = unuse(svgDocument.getElementById("dupe"));
-	//unused.lastElementChild.style.stroke = "rgb(128,0,255)";
-	//console.log(unused);
-	
-	//var instances = {};
-	//
-	//var useTags = getUseTags();
-	//for (var i = 0; i < useTags.length; i++) {
-	//	var response = unuse(useTags[i])
-	//	var unused   = response[0];
-	//	var origID   = response[1];
-	//	components.addInstance(unused, origID);
-	//	unused.lastElementChild.style.fill = "rgb(128,0,255)";
-	//}
-	//console.log(useTags);
-	
 	unuseAll();
 	
 	var paths = svgDocument.getElementsByTagName("path");
 	assignVariablesToPaths(paths);
 	
+	// Colour wires uniquely
 	for (var i = 0; i < paths.length; i++) {
 		if (paths[i].variable) {
 			r = Math.floor(Math.random()*255);
