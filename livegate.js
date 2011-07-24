@@ -47,21 +47,18 @@ Simulator.prototype = {
 		this.time++;
 		
 		if (this.postponed[this.time]) {
-			// Run the simulation until the timestep is complete
-			this.ready = this.postponed[this.time];
+			while (this.postponed[this.time].length > 0)
+				this.ready.push(this.postponed[this.time].shift());
 			delete this.postponed[this.time];
+		}
+		
+		// Run the simulation until the timestep is complete
+		while (this.ready.length > 0) {
+			this._processReady();
 			
-			while (this.ready.length > 0) {
-				this._processReady();
-				
-				// Make inactive jobs active
-				this.ready = this.inactive;
-				this.inactive = [];
-			}
-			
-			return true;
-		} else {
-			return false;
+			// Make inactive jobs active
+			this.ready = this.inactive;
+			this.inactive = [];
 		}
 	},
 }
@@ -122,6 +119,7 @@ Variable.prototype = {
 		
 		// Trigger sensitive events
 		this.triggerOnChange.forEach(function (f) { this.simulator.doNow(f); });
+		
 		if (old_value != new_value) {
 			// Edge Triggering
 			if (this.value)
