@@ -209,7 +209,7 @@ function getRealMatrix(node) {
 		} else if (node.transform.baseVal.numberOfItems == 1) {
 			return parentMatrix.multiply(node.transform.baseVal.getItem(0).matrix);
 		} else {
-			console.warn("Couldn't get real position of element with more than one matrix", node);
+			//console.warn("Couldn't get real position of element with more than one matrix", node);
 			return parentMatrix;
 		}
 	}
@@ -344,7 +344,7 @@ function pathToPoints(path) {
 				realPathSegList[realPathSegList.length-1].y + seg.y
 			));
 		} else {
-			console.warn("Unknown pathSegTypeAsLetter:", seg);
+			//console.warn("Unknown pathSegTypeAsLetter:", seg);
 			return;
 		}
 	}
@@ -450,18 +450,28 @@ function on_load(evt) {
 			initialiseCell(simulator, cell);
 	}
 	
-	svgDocument.getElementById("button").onclick = hide_button;
+	svgDocument.getElementById("button").onclick = button_press;
 }
 
 
-function hide_button () {
+function tick_simulation () {
 	var changed = simulator.processTimestep();
-	console.log(simulator.time + ": " + changed);
+	//console.log(simulator.time + ": " + changed);
 	
 	var wires = svgDocument.getElementsByTagName("path");
 	for (var i = 0; i < wires.length; i ++) {
 		if (wires[i].variable) {
 			wires[i].style.stroke = wires[i].variable.get() ? "rgb(255,0,0)" : "rgb(0,0,0)" ;
 		}
+	}
+}
+
+var intervalID = null;
+function button_press () {
+	if (intervalID == null) {
+		intervalID = setInterval("tick_simulation();", 200);
+	} else {
+		clearInterval(intervalID);
+		intervalID = null;
 	}
 }
